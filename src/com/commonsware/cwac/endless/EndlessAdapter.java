@@ -53,6 +53,17 @@ abstract public class EndlessAdapter extends AdapterWrapper {
   abstract protected boolean cacheInBackground() throws Exception;
 
   abstract protected void appendCachedData();
+  
+  /**
+   * Override this method if you want your adapter to start
+   * fetching new content before the user gets to the end
+   * of the adapter view. For example: if you want the adapter to
+   * start fetching new content when the user reaches 70%
+   * of a ListView's size, just return 0.7f here.
+   */
+  protected float getOffsetToStartFetching() {
+    return 1.f;
+  }
 
   private View pendingView=null;
   private AtomicBoolean keepOnAppending=new AtomicBoolean(true);
@@ -60,6 +71,8 @@ abstract public class EndlessAdapter extends AdapterWrapper {
   private int pendingResource=-1;
   private boolean isSerialized=false;
   private boolean runInBackground=true;
+  private int itemsRemainingToStartFetching=-1;
+  private int lastFetchingPos=-1;
 
   /**
    * Constructor wrapping a supplied ListAdapter
@@ -238,25 +251,45 @@ abstract public class EndlessAdapter extends AdapterWrapper {
    */
   @Override
   public View getView(int position, View convertView, ViewGroup parent) {
-    if (position == super.getCount() && keepOnAppending.get()) {
+
+    int count = super.getCount();
+    
+    if (itemsRemainingToStartFetching == -1) {
+      // This will be calculated only the first time.
+      // Because when the list grows, the relative
+      // percent value calculated using getOffsetToStartFetching()
+      // will increase and a lot of items will be
+      // downloaded without the user seeing them.
+      int startAppendingPos = (int) (count * getOffsetToStartFetching());
+      itemsRemainingToStartFetching = count - startAppendingPos;
+    }
+    
+    if (position == count) {
+      
       if (pendingView == null) {
         pendingView=getPendingView(parent);
-
-        if (runInBackground) {
-          executeAsyncTask(buildTask());
-        }
-        else {
-          try {
-            keepOnAppending.set(cacheInBackground());
-          }
-          catch (Exception e) {
-            keepOnAppending.set(onException(pendingView, e));
-          }
-        }
       }
-
       return(pendingView);
     }
+    
+  	if (position == (count - itemsRemainingToStartFetching)
+  		&& position > lastFetchingPos
+  		&& keepOnAppending.get()) {
+  
+  		if (runInBackground) {
+  			executeAsyncTask(buildTask());
+  		} else {
+  			try {
+  				keepOnAppending.set(cacheInBackground());
+  			} catch (Exception e) {
+  				keepOnAppending.set(onException(pendingView, e));
+  			}
+  		}
+  		
+  		// Avoid fetching again when the user scrolls
+  		// back to this same position
+  		lastFetchingPos = position;
+  	}
 
     return(super.getView(position, convertView, parent));
   }
